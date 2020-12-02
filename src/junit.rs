@@ -1,46 +1,38 @@
-use xml;
-
-use TestModule;
-use TestResult;
+use super::{TestModule, TestResult};
 
 pub fn format(data: Vec<TestModule>) -> xml::Element {
     let mut output = xml::Element::new("testsuites".into(), None, vec![]);
 
     for module in data {
         let attr = vec![
-            ("failures".into(), None, format!("{}", module.4).into()),
-            ("skip".into(), None, format!("{}", module.6).into()),
-            ("tests".into(), None, format!("{}", module.1.len()).into()),
+            ("failures".into(), None, format!("{}", module.failed).into()),
+            ("skip".into(), None, format!("{}", module.ignored).into()),
+            ("tests".into(), None, format!("{}", module.tests.len()).into()),
         ];
         let suite = output.tag(xml::Element::new("testsuite".into(), None, attr));
 
-        for test in module.1 {
-            let (basename, classname) = test.0.rfind("::").map_or((test.0, "::".into()), |i| {
-                (test.0[2 + i..].into(), test.0[..i].replace("::", "."))
-            });
-
-            let attr = vec![
-                ("name".into(), None, basename.into()),
-                ("classname".into(), None, classname.into()),
-            ];
+        for test in module.tests {
+            let attr = vec![("name".into(), None, test.name.into())];
 
             let test_xml = suite.tag(xml::Element::new("testcase".into(), None, attr));
 
-            if test.1 == TestResult::Ignored {
+            if test.result == TestResult::Ignored {
                 test_xml.tag(xml::Element::new("skipped".into(), None, vec![]));
-            } else if test.1 == TestResult::Failed {
-                for failure in &module.2 {
-                    if failure.0 == test.0 {
+            } else if test.result == TestResult::Failed {
+                for failure in &module.failures {
+                    if failure.name == test.name {
                         test_xml
                             .tag(xml::Element::new(
                                 "failure".into(),
                                 None,
-                                vec![("message".into(), None, failure.2.into())],
+                                vec![], //("message".into(), None, failure.info.into())],
                             ))
-                            .cdata(failure.3.into());
-                        test_xml
-                            .tag(xml::Element::new("system-out".into(), None, vec![]))
-                            .text(failure.1.into());
+                            .cdata(failure.info.into());
+                        if !failure.stdout.is_empty() {
+                            test_xml
+                                .tag(xml::Element::new("system-out".into(), None, vec![]))
+                                .text(failure.stdout.into());
+                        }
                     }
                 }
             }
