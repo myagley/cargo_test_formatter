@@ -5,7 +5,7 @@ use std::str::FromStr;
 use nom::{
     alt,
     character::complete::{alphanumeric1, digit1, line_ending, not_line_ending},
-    complete, delimited, do_parse, eof, many0, many1, map_res, named, opt, tag, take_until,
+    complete, delimited, do_parse, eof, many0, many1, map_res, named, opt, tag, take_until, preceded,
     terminated, IResult,
 };
 
@@ -85,7 +85,7 @@ named!(test_function<&str, Test>, do_parse!(
 
 named!(failure<&str, Failure>, do_parse!(
     name:   delimited!(tag!("---- "), take_until!(" stdout ----"), tag!(" stdout ----")) >> line_ending >>
-    // stdout: opt!(preceded!(tag_s!("\t"), take_until_s!("thread"))) >>
+    stdout: opt!(preceded!(tag!("\t"), take_until!("thread"))) >>
     info:   take_until!("\n\n") >>
     // opt!(terminated!(
     //         tag_s!("note: Run with `RUST_BACKTRACE=1` for a backtrace."), line_ending
@@ -96,7 +96,7 @@ named!(failure<&str, Failure>, do_parse!(
     //         line_ending
     // )) >>
     line_ending >> line_ending >>
-    (Failure{ name, stdout: ""/*stdout.unwrap_or("")*/, info, stacktrace: ""/*stack.unwrap_or("")*/ })
+    (Failure{ name, stdout: stdout.unwrap_or(""), info, stacktrace: ""/*stack.unwrap_or("")*/ })
 ));
 
 named!(failures<&str, Vec<Failure> >, do_parse!(
@@ -146,28 +146,28 @@ mod tests {
     use nom::IResult;
 
     use super::{
-        failure, failures, number, testsuite_summary, test_function, test_module, test_result, test_start,
-        test_suite,
+        failure, failures, number, test_function, test_module, test_result, test_start, test_suite,
+        testsuite_summary,
     };
     use crate::{Failure, Test, TestModule, TestResult};
 
     #[test]
     fn test_number() {
-        assert_eq!(number("0"), IResult::Done("", 0));
-        assert_eq!(number("1"), IResult::Done("", 1));
-        assert_eq!(number("99999"), IResult::Done("", 99999));
+        assert_eq!(number("0"), IResult::Ok(("", 0)));
+        assert_eq!(number("1"), IResult::Ok(("", 1)));
+        assert_eq!(number("99999"), IResult::Ok(("", 99999)));
     }
 
     #[test]
     fn test_test_result() {
-        assert_eq!(test_result("ok"), IResult::Done("", TestResult::Ok));
-        assert_eq!(test_result("FAILED"), IResult::Done("", TestResult::Failed));
+        assert_eq!(test_result("ok"), IResult::Ok(("", TestResult::Ok)));
+        assert_eq!(test_result("FAILED"), IResult::Ok(("", TestResult::Failed)));
     }
 
     #[test]
     fn test_test_start() {
-        assert_eq!(test_start("running 1 test\r\n"), IResult::Done("", 1));
-        assert_eq!(test_start("running 0 tests\r\n"), IResult::Done("", 0));
+        assert_eq!(test_start("running 1 test\r\n"), IResult::Ok(("", 1)));
+        assert_eq!(test_start("running 0 tests\r\n"), IResult::Ok(("", 0)));
     }
 
     #[test]
@@ -176,23 +176,29 @@ mod tests {
             testsuite_summary(
                 "test result: ok. 60 passed; 2 failed; 3 ignored; 0 measured; 0 filtered out\r\n"
             ),
-            IResult::Done("", (TestResult::Ok, 60, 2, 3, 0, 0))
+            IResult::Ok(("", (TestResult::Ok, 60, 2, 3, 0, 0)))
         );
         assert_eq!(
             testsuite_summary(
                 "test result: ok. 10 passed; 2 failed; 3 ignored; 4 measured; 0 filtered out\r\n"
             ),
-            IResult::Done("", (TestResult::Ok, 10, 2, 3, 4, 0))
+            IResult::Ok(("", (TestResult::Ok, 10, 2, 3, 4, 0)))
         );
         assert_eq!(testsuite_summary("test result: FAILED. 60 passed; 2 failed; 3 ignored; 0 measured; 1 filtered out\r\n"),
-      IResult::Done("", (TestResult::Failed,60,2,3,0,1)));
+      IResult::Ok(("", (TestResult::Failed,60,2,3,0,1))));
     }
 
     #[test]
     fn test_test_function() {
         assert_eq!(
             test_function("test tests::test_test_case ... ok\r\n"),
-            IResult::Done("", Test("tests::test_test_case", TestResult::Ok))
+            IResult::Ok((
+                "",
+                Test {
+                    name: "tests::test_test_case",
+                    result: TestResult::Ok
+                }
+            ))
         );
     }
 
@@ -200,16 +206,16 @@ mod tests {
     fn test_test_failure() {
         assert_eq!(
             failure(include_str!("../tests/test_failure.txt")),
-            IResult::Done(
+            IResult::Ok((
                 "",
-                Failure(
-                    "tests::test_failing2",
-                    "Again!!\n",
-                    "thread 'tests::test_failing2' panicked at 'assertion failed: \
-        `(left == right)` (left: `no`, right: `yes`)', src/main.rs:243",
-                    ""
-                )
-            )
+                Failure {
+                    name: "tests::test_failing2",
+                    stdout: "Again!!\n",
+                    info: "thread 'tests::test_failing2' panicked at 'assertion failed: \
+        `(left == right)` (left: `no`, right: `yes`)', src/main.rs:243\nnote: Run with `RUST_BACKTRACE=1` for a backtrace.",
+                    stacktrace: ""
+                }
+            ))
         );
     }
 
@@ -217,25 +223,25 @@ mod tests {
     fn test_test_failures() {
         assert_eq!(
             failures(include_str!("../tests/test_failures.txt")),
-            IResult::Done(
+            IResult::Ok((
                 "",
                 vec![
-                    Failure(
-                        "tests::test_failing",
-                        "Oh noes!!\n",
-                        "thread 'tests::test_failing' panicked at 'assertion failed: \
-            false', src/main.rs:250",
-                        ""
-                    ),
-                    Failure(
-                        "tests::test_failing2",
-                        "Again!!\n",
-                        "thread 'tests::test_failing2' panicked at 'assertion failed: \
+                    Failure {
+                        name: "tests::test_failing",
+                        stdout: "Oh noes!!\n",
+                        info: "thread 'tests::test_failing' panicked at 'assertion failed: \
+            false', src/main.rs:250\nnote: Run with `RUST_BACKTRACE=1` for a backtrace.",
+                        stacktrace: ""
+                    },
+                    Failure {
+                        name: "tests::test_failing2",
+                        stdout: "Again!!\n",
+                        info: "thread 'tests::test_failing2' panicked at 'assertion failed: \
             `(left == right)` (left: `no`, right: `yes`)', src/main.rs:255",
-                        ""
-                    )
+                        stacktrace: ""
+                    }
                 ]
-            )
+            ))
         );
     }
 
@@ -243,52 +249,64 @@ mod tests {
     fn test_test_module() {
         assert_eq!(
             test_module(include_str!("../tests/test_module.txt")),
-            IResult::Done(
+            IResult::Ok((
                 "",
-                TestModule(
-                    TestResult::Ok,
-                    vec![
-                        Test("tests::test_test_case", TestResult::Ok),
-                        Test("test_test_case", TestResult::Ok),
-                        Test("tests::test_test_CASE::xxx", TestResult::Ok),
-                        Test(
-                            "src/hexfile.rs - hexfile::MBHexFile::new (line 102)",
-                            TestResult::Ok
-                        ),
-                        Test("tests::test_test_function", TestResult::Ok)
+                TestModule {
+                    result: TestResult::Ok,
+                    tests: vec![
+                        Test {
+                            name: "tests::test_test_case",
+                            result: TestResult::Ok
+                        },
+                        Test {
+                            name: "test_test_case",
+                            result: TestResult::Ok
+                        },
+                        Test {
+                            name: "tests::test_test_CASE::xxx",
+                            result: TestResult::Ok
+                        },
+                        Test {
+                            name: "src/hexfile.rs - hexfile::MBHexFile::new (line 102)",
+                            result: TestResult::Ok
+                        },
+                        Test {
+                            name: "tests::test_test_function",
+                            result: TestResult::Ok
+                        }
                     ],
-                    vec![],
-                    1,
-                    2,
-                    3,
-                    4,
-                    5
-                )
-            )
+                    failures: vec![],
+                    passed: 1,
+                    failed: 2,
+                    ignored: 3,
+                    measured: 4,
+                    filtered: 5
+                }
+            ))
         );
 
         assert_eq!(test_module(include_str!("../tests/test_module2.txt")),
-      IResult::Done("",
-          TestModule(
-              TestResult::Ok,
-              vec![
-                  Test("tests::test_test_case",TestResult::Ok),
-                  Test("tests::test_test_function",TestResult::Ok)
+      IResult::Ok(("",
+          TestModule {
+              result: TestResult::Ok,
+              tests: vec![
+                  Test { name: "tests::test_test_case",result: TestResult::Ok},
+                  Test { name: "tests::test_test_function",result: TestResult::Ok}
               ],
-              vec![
-                  Failure("tests::test_failing",
-                      "Oh noes!!\n", "thread \'tests::test_failing\' panicked at \
-                      \'assertion failed: false\', src/main.rs:250", ""),
-                  Failure("tests::test_failing2",
-                      "Again!!\n", "thread \'tests::test_failing2\' panicked at \
-                      \'assertion failed: `(left == right)` (left: `no`, right: `yes`)\', src/main.rs:255", "")
-              ],1,2,3,4,5)));
+              failures: vec![
+                  Failure { name: "tests::test_failing",
+                      stdout: "Oh noes!!\n", info: "thread \'tests::test_failing\' panicked at \
+                      \'assertion failed: false\', src/main.rs:250\nnote: Run with `RUST_BACKTRACE=1` for a backtrace.", stacktrace:"" },
+                  Failure { name: "tests::test_failing2",
+                      stdout: "Again!!\n", info:"thread \'tests::test_failing2\' panicked at \
+                      \'assertion failed: `(left == right)` (left: `no`, right: `yes`)\', src/main.rs:255", stacktrace:""}
+              ],passed: 1,failed: 2,ignored:3,measured:4,filtered: 5 })));
     }
 
     // #[test]
     // fn test_empty_module() {
     //     assert_eq!(test_module(include_str!("../tests/test_empty_module.txt")),
-    //   IResult::Done("", TestModule(
+    //   IResult::Ok(("", TestModule(
     //           TestResult::Ok,vec![], vec![],1,2,3,4,5)));
     // }
 
@@ -296,52 +314,52 @@ mod tests {
     fn test_test_suite() {
         assert_eq!(
             test_suite(include_str!("../tests/test_suite.txt")),
-            IResult::Done(
+            IResult::Ok((
                 "",
                 vec![
-                    TestModule(
-                        TestResult::Ok,
-                        vec![
-                            Test("tests::test_test_case", TestResult::Ok),
-                            Test("tests::test_test_function", TestResult::Ok)
+                    TestModule {
+                        result: TestResult::Ok,
+                        tests: vec![
+                            Test { name: "tests::test_test_case", result: TestResult::Ok },
+                            Test { name: "tests::test_test_function", result: TestResult::Ok }
                         ],
-                        vec![
-                            Failure(
-                                "tests::test_failing",
-                                "Oh noes!!\n",
-                                "thread \'tests::test_failing\' panicked at \'assertion failed: \
-              false\', src/main.rs:250",
-                                ""
-                            ),
-                            Failure(
-                                "tests::test_failing2",
-                                "Again!!\n",
-                                "thread \'tests::test_failing2\' panicked at \'assertion failed: \
+                        failures: vec![
+                            Failure {
+                                name: "tests::test_failing",
+                                stdout: "Oh noes!!\n",
+                                info: "thread \'tests::test_failing\' panicked at \'assertion failed: \
+              false\', src/main.rs:250\nnote: Run with `RUST_BACKTRACE=1` for a backtrace.",
+                                stacktrace:""
+                            },
+                            Failure {
+                                name: "tests::test_failing2",
+                                stdout: "Again!!\n",
+                                info: "thread \'tests::test_failing2\' panicked at \'assertion failed: \
               `(left == right)` (left: `no`, right: `yes`)\', src/main.rs:255",
-                                ""
-                            )
+                                stacktrace: ""
+                            }
                         ],
-                        1,
-                        2,
-                        3,
-                        4,
-                        5
-                    ),
-                    TestModule(
-                        TestResult::Ok,
-                        vec![Test(
-                            "src/hexfile.rs - hexfile::MBHexFile::new (line 102)",
-                            TestResult::Ok
-                        ),],
-                        vec![],
-                        1,
-                        0,
-                        0,
-                        0,
-                        0
-                    )
+                        passed: 1,
+                        failed: 2,
+                        ignored: 3,
+                        measured: 4,
+                        filtered: 5
+                    },
+                    TestModule {
+                        result: TestResult::Ok,
+                        tests: vec![Test {
+                            name: "src/hexfile.rs - hexfile::MBHexFile::new (line 102)",
+                            result: TestResult::Ok
+                        }],
+                        failures: vec![],
+                        passed: 1,
+                        failed: 0,
+                        ignored: 0,
+                        measured: 0,
+                        filtered: 0
+                    }
                 ]
-            )
+            ))
         );
     }
 }
