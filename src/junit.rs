@@ -7,7 +7,11 @@ pub fn format(data: Vec<TestModule>) -> xml::Element {
         let attr = vec![
             ("failures".into(), None, format!("{}", module.failed).into()),
             ("skip".into(), None, format!("{}", module.ignored).into()),
-            ("tests".into(), None, format!("{}", module.tests.len()).into()),
+            (
+                "tests".into(),
+                None,
+                format!("{}", module.tests.len()).into(),
+            ),
         ];
         let suite = output.tag(xml::Element::new("testsuite".into(), None, attr));
 

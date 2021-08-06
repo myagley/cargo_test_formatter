@@ -1,5 +1,5 @@
-use std::fs::File;
 use std::io;
+use std::time::Duration;
 
 mod junit;
 mod parser;
@@ -32,6 +32,7 @@ pub struct TestModule<'a> {
     ignored: u32,
     measured: u32,
     filtered: u32,
+    finished_in: Duration,
 }
 
 fn load_data<'a, T>(reader: &mut T) -> String

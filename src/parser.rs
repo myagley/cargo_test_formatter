@@ -1,12 +1,14 @@
 //use nom::{alphanumeric, digit, line_ending, not_line_ending, IResult};
 
 use std::str::FromStr;
+use std::time::Duration;
 
 use nom::{
     alt,
     character::complete::{alphanumeric1, digit1, line_ending, not_line_ending},
-    complete, delimited, do_parse, eof, many0, many1, map_res, named, opt, tag, take_until, preceded,
-    terminated, IResult,
+    complete, delimited, do_parse, eof, many0, many1, map_res, named,
+    number::complete::double,
+    opt, preceded, tag, take_until, terminated, IResult,
 };
 
 use super::{Failure, Test, TestModule, TestResult};
@@ -18,7 +20,7 @@ named!(number<&str, u32>,
   )
 );
 
-/// ok|FAILED|ignored
+// ok|FAILED|ignored
 named!(test_result<&str, TestResult>,
     do_parse!(
         result: alphanumeric1 >>
@@ -43,7 +45,7 @@ named!(test_start<&str, u32>, terminated!(
     line_ending
 ));
 
-named!(testsuite_summary<&str, (TestResult,u32, u32, u32, u32, u32)>, do_parse!(
+named!(testsuite_summary<&str, (TestResult,u32, u32, u32, u32, u32, Duration)>, do_parse!(
     tag!("test result: ") >>
     result: test_result   >>
     tag!(". ")            >>
@@ -60,12 +62,17 @@ named!(testsuite_summary<&str, (TestResult,u32, u32, u32, u32, u32)>, do_parse!(
         number,
         tag!(" filtered out")
     )) >>
+    finished_in: opt!(delimited!(
+        tag!("; finished in "),
+        double,
+        tag!("s")
+    )) >>
     line_ending                   >>
-    (result, passed, failed, ignored, measured, filtered.unwrap_or(0))
+    (result, passed, failed, ignored, measured, filtered.unwrap_or(0), finished_in.map(Duration::from_secs_f64).unwrap_or(Duration::from_secs(0)))
 ));
 
 /// Test line
-///  
+///
 /// ## Normal test
 /// ```
 /// test tests::test_test_case ... ok\r\n
@@ -123,7 +130,8 @@ named!(test_module<&str, TestModule>, do_parse!(
         failed: end.2,
         ignored: end.3,
         measured: end.4,
-        filtered: end.5
+        filtered: end.5,
+        finished_in: end.6,
     })
 ));
 
@@ -142,6 +150,7 @@ pub fn parse(string: &str) -> Result<Vec<TestModule>, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
 
     use nom::IResult;
 
@@ -176,16 +185,34 @@ mod tests {
             testsuite_summary(
                 "test result: ok. 60 passed; 2 failed; 3 ignored; 0 measured; 0 filtered out\r\n"
             ),
-            IResult::Ok(("", (TestResult::Ok, 60, 2, 3, 0, 0)))
+            IResult::Ok(("", (TestResult::Ok, 60, 2, 3, 0, 0, Duration::from_secs(0))))
         );
         assert_eq!(
             testsuite_summary(
                 "test result: ok. 10 passed; 2 failed; 3 ignored; 4 measured; 0 filtered out\r\n"
             ),
-            IResult::Ok(("", (TestResult::Ok, 10, 2, 3, 4, 0)))
+            IResult::Ok(("", (TestResult::Ok, 10, 2, 3, 4, 0, Duration::from_secs(0))))
         );
         assert_eq!(testsuite_summary("test result: FAILED. 60 passed; 2 failed; 3 ignored; 0 measured; 1 filtered out\r\n"),
-      IResult::Ok(("", (TestResult::Failed,60,2,3,0,1))));
+      IResult::Ok(("", (TestResult::Failed,60,2,3,0,1,Duration::from_secs(0)))));
+    }
+
+    #[test]
+    fn test_testsuite_summary_finished_in() {
+        assert_eq!(
+            testsuite_summary(
+                "test result: ok. 60 passed; 2 failed; 3 ignored; 0 measured; 0 filtered out; finished in 29.34s\r\n"
+            ),
+            IResult::Ok(("", (TestResult::Ok, 60, 2, 3, 0, 0, Duration::from_secs_f64(29.34))))
+        );
+        assert_eq!(
+            testsuite_summary(
+                "test result: ok. 10 passed; 2 failed; 3 ignored; 4 measured; 0 filtered out; finished in 0.00s\r\n"
+            ),
+            IResult::Ok(("", (TestResult::Ok, 10, 2, 3, 4, 0, Duration::from_secs_f64(0.0))))
+        );
+        assert_eq!(testsuite_summary("test result: FAILED. 60 passed; 2 failed; 3 ignored; 0 measured; 1 filtered out; finished in 8.46s\r\n"),
+      IResult::Ok(("", (TestResult::Failed,60,2,3,0,1,Duration::from_secs_f64(8.46)))));
     }
 
     #[test]
@@ -280,7 +307,8 @@ mod tests {
                     failed: 2,
                     ignored: 3,
                     measured: 4,
-                    filtered: 5
+                    filtered: 5,
+                    finished_in: Duration::from_secs(0),
                 }
             ))
         );
@@ -300,7 +328,7 @@ mod tests {
                   Failure { name: "tests::test_failing2",
                       stdout: "Again!!\n", info:"thread \'tests::test_failing2\' panicked at \
                       \'assertion failed: `(left == right)` (left: `no`, right: `yes`)\', src/main.rs:255", stacktrace:""}
-              ],passed: 1,failed: 2,ignored:3,measured:4,filtered: 5 })));
+              ],passed: 1,failed: 2,ignored:3,measured:4,filtered: 5, finished_in: Duration::from_secs(0) })));
     }
 
     // #[test]
@@ -343,7 +371,8 @@ mod tests {
                         failed: 2,
                         ignored: 3,
                         measured: 4,
-                        filtered: 5
+                        filtered: 5,
+                        finished_in: Duration::from_secs(0),
                     },
                     TestModule {
                         result: TestResult::Ok,
@@ -356,10 +385,17 @@ mod tests {
                         failed: 0,
                         ignored: 0,
                         measured: 0,
-                        filtered: 0
+                        filtered: 0,
+                        finished_in: Duration::from_secs(0),
                     }
                 ]
             ))
         );
+    }
+
+    #[test]
+    fn test_rust_1_54_0_parses() {
+        let result = test_suite(include_str!("../tests/test_suite.1.54.0.txt"));
+        assert!(result.is_ok());
     }
 }
